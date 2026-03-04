@@ -1,0 +1,20 @@
+# Generated code — do not commit, regenerated at build time
+app/generated/*.py
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+dist/
+build/
+*.egg
+
+# Environment
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
