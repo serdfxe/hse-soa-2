@@ -69,14 +69,16 @@ services:
     healthcheck:
       test: ["CMD", "redis-cli", "-p", "26379", "ping"]
       interval: 5s
-      timeout: 3s
-      retries: 10
+      timeout: 5s
+      retries: 15
+      start_period: 15s
 
   # ── Flight Service (gRPC) ─────────────────────────────────────────────────────
   flight-service:
     build:
       context: services/flight-service
       dockerfile: Dockerfile
+    restart: on-failure
     environment:
       DATABASE_URL: postgresql+asyncpg://flightuser:flightpass@flight-db/flightdb
       GRPC_PORT: "50051"
@@ -98,6 +100,7 @@ services:
     build:
       context: services/booking-service
       dockerfile: Dockerfile
+    restart: on-failure
     environment:
       DATABASE_URL: postgresql+asyncpg://bookinguser:bookingpass@booking-db/bookingdb
       FLIGHT_SERVICE_URL: "flight-service:50051"
