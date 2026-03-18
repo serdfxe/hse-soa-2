@@ -41,7 +41,7 @@ services:
       retries: 10
 
   redis-replica:
-    image: redis:7-alpine
+    image: redis:6-alpine
     command: redis-server --port 6379 --replicaof redis-master 6379 --save "" --appendonly no
     depends_on:
       redis-master:
@@ -53,7 +53,7 @@ services:
       retries: 10
 
   redis-sentinel:
-    image: redis:7-alpine
+    image: redis:6-alpine
     command: >
       sh -c "
         printf 'port 26379\nsentinel monitor mymaster redis-master 6379 1\nsentinel down-after-milliseconds mymaster 5000\nsentinel failover-timeout mymaster 30000\nsentinel parallel-syncs mymaster 1\n' > /tmp/sentinel.conf &&
