@@ -1,45 +1,119 @@
 services:
 
-  db:
+  # ── PostgreSQL for Flight Service ─────────────────────────────────────────────
+  flight-db:
     image: postgres:16-alpine
-    restart: unless-stopped
     environment:
-      POSTGRES_DB: marketplace
-      POSTGRES_USER: marketplace
-      POSTGRES_PASSWORD: marketplace
+      POSTGRES_USER: flightuser
+      POSTGRES_PASSWORD: flightpass
+      POSTGRES_DB: flightdb
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+      - flight_db_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U marketplace -d marketplace"]
+      test: ["CMD-SHELL", "pg_isready -U flightuser -d flightdb"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  marketplace:
-    build:
-      context: ./services/marketplace
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    ports:
-      - "8000:8000"
+  # ── PostgreSQL for Booking Service ────────────────────────────────────────────
+  booking-db:
+    image: postgres:16-alpine
     environment:
-      DATABASE_URL: postgresql+asyncpg://marketplace:marketplace@db/marketplace
-      JWT_SECRET_KEY: dev-secret-change-in-production
-      JWT_ALGORITHM: HS256
-      ACCESS_TOKEN_EXPIRE_MINUTES: 30
-      REFRESH_TOKEN_EXPIRE_DAYS: 30
-      ORDER_RATE_LIMIT_MINUTES: 1
-      DEBUG: "false"
+      POSTGRES_USER: bookinguser
+      POSTGRES_PASSWORD: bookingpass
+      POSTGRES_DB: bookingdb
+    volumes:
+      - booking_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bookinguser -d bookingdb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── Redis Sentinel (master + replica + sentinel) ──────────────────────────────
+  redis-master:
+    image: redis:7-alpine
+    command: redis-server --port 6379 --save "" --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis-replica:
+    image: redis:7-alpine
+    command: redis-server --port 6379 --replicaof redis-master 6379 --save "" --appendonly no
     depends_on:
-      db:
+      redis-master:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis-sentinel:
+    image: redis:7-alpine
+    command: >
+      sh -c "
+        printf 'port 26379\nsentinel monitor mymaster redis-master 6379 1\nsentinel down-after-milliseconds mymaster 5000\nsentinel failover-timeout mymaster 30000\nsentinel parallel-syncs mymaster 1\n' > /tmp/sentinel.conf &&
+        redis-sentinel /tmp/sentinel.conf
+      "
+    ports:
+      - "26379:26379"
+    depends_on:
+      redis-master:
+        condition: service_healthy
+      redis-replica:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "26379", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── Flight Service (gRPC) ─────────────────────────────────────────────────────
+  flight-service:
+    build:
+      context: services/flight-service
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://flightuser:flightpass@flight-db/flightdb
+      GRPC_PORT: "50051"
+      GRPC_API_KEY: "super-secret-api-key"
+      REDIS_SENTINEL_HOSTS: "redis-sentinel:26379"
+      REDIS_SENTINEL_MASTER: "mymaster"
+      REDIS_TTL_SECONDS: "300"
+      DEBUG: "false"
+    ports:
+      - "50051:50051"
+    depends_on:
+      flight-db:
+        condition: service_healthy
+      redis-sentinel:
+        condition: service_healthy
+
+  # ── Booking Service (REST) ────────────────────────────────────────────────────
+  booking-service:
+    build:
+      context: services/booking-service
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://bookinguser:bookingpass@booking-db/bookingdb
+      FLIGHT_SERVICE_URL: "flight-service:50051"
+      GRPC_API_KEY: "super-secret-api-key"
+      CB_FAILURE_THRESHOLD: "5"
+      CB_RECOVERY_TIMEOUT: "30.0"
+      RETRY_MAX_ATTEMPTS: "3"
+      DEBUG: "false"
+    ports:
+      - "8000:8000"
+    depends_on:
+      booking-db:
+        condition: service_healthy
+      flight-service:
+        condition: service_started
 
 volumes:
-  postgres_data:
+  flight_db_data:
+  booking_db_data:
